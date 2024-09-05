@@ -19,8 +19,8 @@ const kafka= new Kafka({
     ca:[fs.readFileSync(path.join(__dirname,'kafka.pem'),'utf-8')],
   },
   sasl: {
-    username: 'avnadmin',
-    password: 'AVNS_Mz4YSr1oX-5JKYocRyt',
+    username: process.env.KAFKA_USERNAME,
+    password: process.env.KAFKA_PASSWORD,
     mechanism: 'plain'
   },
 })
