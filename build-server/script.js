@@ -3,58 +3,84 @@ const path = require("path");
 const fs = require("fs");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const mime = require("mime-types");
-const Redis = require('ioredis');
+const {Kafka} = require('kafkajs');
+// const Redis = require("ioredis");
 const s3Client = new S3Client({
-    region: "ap-south-1",
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-    }
+  region: "ap-south-1",
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
 });
-const publisher = new Redis('redis://default:*******@redis-19058.c305.ap-south-1-1.ec2.redns.redis-cloud.com:19058')
+const kafka= new Kafka({
+  clientId: `docker-build-server-${PROJECT_ID}`,
+  brokers:[],
+  ssl: {
+    ca:[fs.readFileSync(path.join(__dirname,'kafka.pem'),'utf-8')],
+  },
+  sasl: {
+    username: 'avnadmin',
+    password: 'AVNS_Mz4YSr1oX-5JKYocRyt',
+    mechanism: 'plain'
+  },
+})
+const producer= kafka.producer();
+// const publisher = new Redis('redis://default:fPGg5EFmFVTuLWxemeOO8jKwiwQVsRyj@redis-19058.c305.ap-south-1-1.ec2.redns.redis-cloud.com:19058')
 
-const publishLog = (log) => {
-    publisher.publish(`logs:${PROJECT_ID}`, JSON.stringify({log}))
-}
+const DEPLOYMENT_ID = process.env.DEPLOYMENT_ID;  
 const PROJECT_ID = process.env.PROJECT_ID;
+
+const publishLog = async (log) => {
+  // publisher.publish(`logs:${PROJECT_ID}`, JSON.stringify({ log }));
+  await producer.send({
+    topic:'container-logs',
+    messages:[
+      {
+        key:'log',
+        value:JSON.stringify({PROJECT_ID,DEPLOYMENT_ID,log})
+      }
+    ]
+  })
+};
 async function init() {
-    publishLog("Starting script...")
-    const outDirPath = path.join(__dirname, "repo_output");
-    const p = exec(`cd ${outDirPath} && npm install && npm run build`);
-    p.stdout.on("data", function (data) {
-        publishLog(data.toString());
-    });
+  await producer.connect();
+  await publishLog("Starting script...");
+  const outDirPath = path.join(__dirname, "repo_output");
+  const p = exec(`cd ${outDirPath} && npm install && npm run build`);
+  p.stdout.on("data", async function (data) {
+    await publishLog(data.toString());
+  });
 
-    p.stderr.on("data", function (data) {
-        publishLog('Error:', data.toString());
-    });
+  p.stderr.on("data", async function (data) {
+    await publishLog(`Error: ${data.toString()}`);
+  });
 
-    p.on("close", async function () {
-        publishLog("Build completed");
-        const distDirPath = path.join(outDirPath, "dist");
-        const distFiles = fs.readdirSync(distDirPath, { recursive: true });
+  p.on("close", async function () {
+    await publishLog("Build completed");
+    const distDirPath = path.join(outDirPath, "dist");
+    const distFiles = fs.readdirSync(distDirPath, { recursive: true });
 
-        for (const file of distFiles) {
-            const filePath = path.join(distDirPath, file);
+    for (const file of distFiles) {
+      const filePath = path.join(distDirPath, file);
 
-            if (fs.lstatSync(filePath).isDirectory()) {
-                continue;
-            }
-            publishLog('uploading', filePath)
+      if (fs.lstatSync(filePath).isDirectory()) {
+        continue;
+      }
+      await publishLog(`Uploading ${file}...`);
 
-            const command = new PutObjectCommand({
-                Bucket: 'public.asharaf.dev',
-                Key: `__outputs/${PROJECT_ID}/${file}`,
-                Body: fs.createReadStream(filePath),
-                ContentType: mime.lookup(filePath)
-            })
+      const command = new PutObjectCommand({
+        Bucket: "public.asharaf.dev",
+        Key: `__outputs/${PROJECT_ID}/${file}`,
+        Body: fs.createReadStream(filePath),
+        ContentType: mime.lookup(filePath),
+      });
 
-            await s3Client.send(command);
+      await s3Client.send(command);
 
-            publishLog('uploaded', filePath)
-        }
-
-    });
-}
+      await publishLog(`uploaded ${file}`);
+    }
+    process.exit(0);
+  });
+} 
 
 init();

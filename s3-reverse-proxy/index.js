@@ -2,7 +2,7 @@ const express = require('express');
 const httpProxy = require('http-proxy');
 const dotenv = require('dotenv');
 dotenv.config();
-console.log("BASE_PATH", process.env.AWS_S3_BASE_PATH);
+console.log("ENV:", process.env);
 const app = express();
 const PORT = 8000;
 const BASE_PATH = process.env.AWS_S3_BASE_PATH;
